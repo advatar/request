@@ -5,10 +5,10 @@
 , "author" : "Mikeal Rogers <mikeal.rogers@gmail.com>"
 , "repository" :
   { "type" : "git"
-  , "url" : "http://github.com/mikeal/request.git"
+  , "url" : "http://github.com/advatar/request.git"
   }
 , "bugs" :
-  { "url" : "http://github.com/mikeal/request/issues" }
+  { "url" : "http://github.com/advatar/request/issues" }
 , "engines" : ["node >= 0.3.6"]
 , "main" : "./main"
 , "scripts": { "test": "node tests/run.js" }
