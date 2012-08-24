@@ -52,8 +52,8 @@ if (https && !https.Agent) {
     http.Agent.call(this, options)
   }
   util.inherits(https.Agent, http.Agent)
-  https.Agent.prototype._getConnection = function (host, port, cb) {
-    var s = tls.connect(port, host, this.options, function () {
+  https.Agent.prototype._getConnection = function(host, port, cb) {
+    var s = tls.connect(port, host, this.options, function() {
       // do other checks here?
       if (cb) cb()
     })
@@ -107,8 +107,8 @@ Request.prototype.init = function (options) {
   var self = this
   
   if (!options) options = {}
-  if (process.env.NODE_DEBUG && /request/.test(process.env.NODE_DEBUG)) console.error('REQUEST', options)
-  if (!self.pool && self.pool !== false) self.pool = globalPool
+  
+  if (!self.pool) self.pool = globalPool
   self.dests = []
   self.__isRequestRequest = true
   
@@ -135,37 +135,55 @@ Request.prototype.init = function (options) {
   } else {
     if (typeof self.uri == "string") self.uri = url.parse(self.uri)
   }
+
+  if (!self.proxy && process.env.http_proxy)
+  {
+  self.proxy = url.parse(process.env.http_proxy)
+	if (process.env.no_proxy) 
+		self.no_proxy = process.env.no_proxy
+  }
+
+  if (self.proxy) {
+	console.log(self.proxy)
+	console.log(self.no_proxy)
+	console.log(self.uri)	
+  }
+
+  // bypass proxy for the $no_proxy pattern
+
+
+  if (self.no_proxy && self.no_proxy.indexOf(self.uri.hostname)>=0)
+  {
+	console.log('------ No proxy rule --------');
+	console.log(self.no_proxy);
+	console.log(self.uri);
+	console.log('------  e n d --------');
+	self.proxy = undefined
+  }
+
+ if (self.proxy) {
+	console.log(self.proxy)
+	console.log(self.no_proxy)
+	console.log(self.uri)	
+  }
+
   if (self.proxy) {
     if (typeof self.proxy == 'string') self.proxy = url.parse(self.proxy)
 
     // do the HTTP CONNECT dance using koichik/node-tunnel
     if (http.globalAgent && self.uri.protocol === "https:") {
+      self.tunnel = true
       var tunnelFn = self.proxy.protocol === "http:"
                    ? tunnel.httpsOverHttp : tunnel.httpsOverHttps
 
       var tunnelOptions = { proxy: { host: self.proxy.hostname
-                                   , port: +self.proxy.port
+                                   , port: +self.proxy.port 
                                    , proxyAuth: self.proxy.auth }
                           , ca: this.ca }
 
       self.agent = tunnelFn(tunnelOptions)
       self.tunnel = true
     }
-  }
-
-  if (!self.uri.host || !self.uri.pathname) {
-    // Invalid URI: it may generate lot of bad errors, like "TypeError: Cannot call method 'indexOf' of undefined" in CookieJar
-    // Detect and reject it as soon as possible
-    var faultyUri = url.format(self.uri)
-    var message = 'Invalid URI "' + faultyUri + '"'
-    if (Object.keys(options).length === 0) {
-      // No option ? This can be the sign of a redirect
-      // As this is a case where the user cannot do anything (he didn't call request directly with this URL)
-      // he should be warned that it can be caused by a redirection (can save some hair)
-      message += '. This can be caused by a crappy redirection.'
-    }
-    self.emit('error', new Error(message))
-    return // This error was fatal
   }
 
   self._redirectsFollowed = self._redirectsFollowed || 0
@@ -220,18 +238,6 @@ Request.prototype.init = function (options) {
       self.timeoutTimer = null
     }
     self.emit('error', error)
-  }
-
-  self._parserErrorHandler = function (error) {
-    if (this.res) {
-      if (this.res.request) {
-        this.res.request.emit('error', error)
-      } else {
-        this.res.emit('error', error)
-      }
-    } else {
-      this._httpMessage.emit('error', error)
-    }
   }
 
   if (options.form) {
@@ -330,7 +336,7 @@ Request.prototype.init = function (options) {
   }
 
   self.once('pipe', function (src) {
-    if (self.ntick && self._started) throw new Error("You cannot pipe to this stream after the outbound request has started.")
+    if (self.ntick) throw new Error("You cannot pipe to this stream after the first nextTick() after creation of the request stream.")
     self.src = src
     if (isReadStream(src)) {
       if (!self.headers['content-type'] && !self.headers['Content-Type'])
@@ -358,7 +364,7 @@ Request.prototype.init = function (options) {
     
     if (self.body) {
       if (Array.isArray(self.body)) {
-        self.body.forEach(function (part) {
+        self.body.forEach(function(part) {
           self.write(part)
         })
       } else {
@@ -369,77 +375,11 @@ Request.prototype.init = function (options) {
       console.warn("options.requestBodyStream is deprecated, please pass the request object to stream.pipe.")
       self.requestBodyStream.pipe(self)
     } else if (!self.src) {
-      if (self.method !== 'GET' && typeof self.method !== 'undefined') {
-        self.headers['content-length'] = 0;
-      }
-      self.end();
+      self.headers['content-length'] = 0
+      self.end()
     }
     self.ntick = true
   })
-}
-
-// Must call this when following a redirect from https to http or vice versa
-// Attempts to keep everything as identical as possible, but update the
-// httpModule, Tunneling agent, and/or Forever Agent in use.
-Request.prototype._updateProtocol = function () {
-  var self = this
-  var protocol = self.uri.protocol
-
-  if (protocol === 'https:') {
-    // previously was doing http, now doing https
-    // if it's https, then we might need to tunnel now.
-    if (self.proxy) {
-      self.tunnel = true
-      var tunnelFn = self.proxy.protocol === 'http:'
-                   ? tunnel.httpsOverHttp : tunnel.httpsOverHttps
-      var tunnelOptions = { proxy: { host: self.proxy.hostname
-                                   , post: +self.proxy.port
-                                   , proxyAuth: self.proxy.auth }
-                          , ca: self.ca }
-      self.agent = tunnelFn(tunnelOptions)
-      return
-    }
-
-    self.httpModule = https
-    switch (self.agentClass) {
-      case ForeverAgent:
-        self.agentClass = ForeverAgent.SSL
-        break
-      case http.Agent:
-        self.agentClass = https.Agent
-        break
-      default:
-        // nothing we can do.  Just hope for the best.
-        return
-    }
-
-    // if there's an agent, we need to get a new one.
-    if (self.agent) self.agent = self.getAgent()
-
-  } else {
-    if (log) log('previously https, now http')
-    // previously was doing https, now doing http
-    // stop any tunneling.
-    if (self.tunnel) self.tunnel = false
-    self.httpModule = http
-    switch (self.agentClass) {
-      case ForeverAgent.SSL:
-        self.agentClass = ForeverAgent
-        break
-      case https.Agent:
-        self.agentClass = http.Agent
-        break
-      default:
-        // nothing we can do.  just hope for the best
-        return
-    }
-
-    // if there's an agent, then get a new one.
-    if (self.agent) {
-      self.agent = null
-      self.agent = self.getAgent()
-    }
-  }
 }
 
 Request.prototype.getAgent = function () {
@@ -467,11 +407,7 @@ Request.prototype.getAgent = function () {
     poolKey += this.host + ':' + this.port
   }
 
-  // ca option is only relevant if proxy or destination are https
-  var proxy = this.proxy
-  if (typeof proxy === 'string') proxy = url.parse(proxy)
-  var caRelevant = (proxy && proxy.protocol === 'https:') || this.uri.protocol === 'https:'
-  if (options.ca && caRelevant) {
+  if (options.ca) {
     if (poolKey) poolKey += ':'
     poolKey += options.ca
   }
@@ -481,9 +417,6 @@ Request.prototype.getAgent = function () {
     return this.httpModule.globalAgent
   }
 
-  // we're using a stored agent.  Make sure it's protocol-specific
-  poolKey = this.uri.protocol + poolKey
-
   // already generated an agent for this setting
   if (this.pool[poolKey]) return this.pool[poolKey]
 
@@ -492,28 +425,25 @@ Request.prototype.getAgent = function () {
 
 Request.prototype.start = function () {
   var self = this
-
+  
   if (self._aborted) return
-
+  
   self._started = true
   self.method = self.method || 'GET'
   self.href = self.uri.href
   if (log) log('%method %href', self)
-
+  
   if (self.src && self.src.stat && self.src.stat.size) {
     self.headers['content-length'] = self.src.stat.size
   }
   if (self._aws) {
     self.aws(self._aws, true)
   }
-
+  
   self.req = self.httpModule.request(self, function (response) {
-    if (response.connection.listeners('error').indexOf(self._parserErrorHandler) === -1) {
-      response.connection.once('error', self._parserErrorHandler)
-    }
     if (self._aborted) return
     if (self._paused) response.pause()
-
+    
     self.response = response
     response.request = self
     response.toJSON = toJSON
@@ -531,8 +461,8 @@ Request.prototype.start = function () {
       clearTimeout(self.timeoutTimer)
       self.timeoutTimer = null
     }  
-
-    var addCookie = function (cookie) {
+    
+    var addCookie = function(cookie){
       if (self._jar) self._jar.add(new Cookie(cookie))
       else cookieJar.add(new Cookie(cookie))
     }
@@ -555,15 +485,7 @@ Request.prototype.start = function () {
       if (!isUrl.test(response.headers.location)) {
         response.headers.location = url.resolve(self.uri.href, response.headers.location)
       }
-
-      var uriPrev = self.uri
-      self.uri = url.parse(response.headers.location)
-
-      // handle the case where we change protocol from https to http or vice versa
-      if (self.uri.protocol !== uriPrev.protocol) {
-        self._updateProtocol()
-      }
-
+      self.uri = response.headers.location
       self.redirects.push(
         { statusCode : response.statusCode
         , redirectUri: response.headers.location 
@@ -633,7 +555,7 @@ Request.prototype.start = function () {
             if (self.encoding === null) {
               response.body = body
             } else {
-              response.body = body.toString(self.encoding)
+              response.body = body.toString()
             }
           } else if (buffer.length) {
             response.body = buffer.join('')
@@ -652,7 +574,7 @@ Request.prototype.start = function () {
   })
 
   if (self.timeout && !self.timeoutTimer) {
-    self.timeoutTimer = setTimeout(function () {
+    self.timeoutTimer = setTimeout(function() {
       self.req.abort()
       var e = new Error("ETIMEDOUT")
       e.code = "ETIMEDOUT"
@@ -662,7 +584,7 @@ Request.prototype.start = function () {
     // Set additional timeout on socket - in case if remote
     // server freeze after sending headers
     if (self.req.setTimeout) { // only works on node 0.6+
-      self.req.setTimeout(self.timeout, function () {
+      self.req.setTimeout(self.timeout, function(){
         if (self.req) {
           self.req.abort()
           var e = new Error("ESOCKETTIMEDOUT")
@@ -674,16 +596,11 @@ Request.prototype.start = function () {
   }
   
   self.req.on('error', self.clientErrorHandler)
-  self.req.on('drain', function() {
-    self.emit('drain')
-  })
-  self.on('end', function() {
-    self.req.connection.removeListener('error', self._parserErrorHandler)
-  })
+  
   self.emit('request', self.req)
 }
 
-Request.prototype.abort = function () {
+Request.prototype.abort = function() {
   this._aborted = true;
   
   if (this.req) {
@@ -722,7 +639,7 @@ Request.prototype.setHeader = function (name, value, clobber) {
   return this
 }
 Request.prototype.setHeaders = function (headers) {
-  for (var i in headers) {this.setHeader(i, headers[i])}
+  for (i in headers) {this.setHeader(i, headers[i])}
   return this
 }
 Request.prototype.qs = function (q, clobber) {
@@ -754,18 +671,16 @@ Request.prototype.multipart = function (multipart) {
     self.headers['content-type'] = self.headers['content-type'].split(';')[0] + '; boundary=' + self.boundary;
   }
 
+  console.log('boundary >> ' + self.boundary)
+
   if (!multipart.forEach) throw new Error('Argument error, options.multipart.')
 
-  if (self.preambleCRLF) {
-    self.body.push(new Buffer('\r\n'))
-  }
-  
   multipart.forEach(function (part) {
     var body = part.body
-    if(body == null) throw Error('Body attribute missing in multipart.')
+    if(!body) throw Error('Body attribute missing in multipart.')
     delete part.body
     var preamble = '--' + self.boundary + '\r\n'
-    Object.keys(part).forEach(function (key) {
+    Object.keys(part).forEach(function(key){
       preamble += key + ': ' + part[key] + '\r\n'
     })
     preamble += '\r\n'
@@ -844,7 +759,6 @@ Request.prototype.oauth = function (_oauth) {
       // skip 
     } else {
       delete oa['oauth_'+i]
-      delete oa[i]
     }
   }
   this.headers.Authorization = 
@@ -908,7 +822,7 @@ Request.prototype.pipe = function (dest, opts) {
 }
 Request.prototype.write = function () {
   if (!this._started) this.start()
-  return this.req.write.apply(this.req, arguments)
+  this.req.write.apply(this.req, arguments)
 }
 Request.prototype.end = function (chunk) {
   if (chunk) this.write(chunk)
@@ -959,25 +873,16 @@ function request (uri, options, callback) {
 
 module.exports = request
 
-request.initParams = initParams;
-
-request.defaults = function (options, requester) {
+request.defaults = function (options) {
   var def = function (method) {
     var d = function (uri, opts, callback) {
       var params = initParams(uri, opts, callback);
       for (var i in options) {
         if (params.options[i] === undefined) params.options[i] = options[i]
       }
-      if(typeof requester === 'function') {
-        if(method === request) {
-          method = requester;
-        } else {
-          params.options._requester = requester;
-        }
-      }
-      return method(params.options, params.callback);
+      return method(params.options, params.callback)
     }
-    return d;
+    return d
   }
   var de = def(request)
   de.get = def(request.get)
@@ -1027,9 +932,6 @@ request.head = function (uri, options, callback) {
 request.del = function (uri, options, callback) {
   var params = initParams(uri, options, callback);
   params.options.method = 'DELETE'
-  if(typeof params.options._requester === 'function') {
-    request = params.options._requester;
-  }
   return request(params.uri || null, params.options, params.callback)
 }
 request.jar = function () {
@@ -1081,4 +983,3 @@ function toJSON () {
 }
 
 Request.prototype.toJSON = toJSON
-
