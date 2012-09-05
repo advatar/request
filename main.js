@@ -142,30 +142,30 @@ Request.prototype.init = function (options) {
 	if (process.env.no_proxy) 
 		self.no_proxy = process.env.no_proxy
   }
-
+/*
   if (self.proxy) {
 	console.log(self.proxy)
 	console.log(self.no_proxy)
 	console.log(self.uri)	
   }
-
+*/
   // bypass proxy for the $no_proxy pattern
 
 
   if (self.no_proxy && self.no_proxy.indexOf(self.uri.hostname)>=0)
   {
-	console.log('------ No proxy rule --------');
+	/*console.log('------ No proxy rule --------');
 	console.log(self.no_proxy);
 	console.log(self.uri);
-	console.log('------  e n d --------');
+	console.log('------  e n d --------');*/
 	self.proxy = undefined
   }
 
- if (self.proxy) {
+ /*if (self.proxy) {
 	console.log(self.proxy)
 	console.log(self.no_proxy)
 	console.log(self.uri)	
-  }
+  }*/
 
   if (self.proxy) {
     if (typeof self.proxy == 'string') self.proxy = url.parse(self.proxy)
